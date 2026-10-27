@@ -140,10 +140,3 @@ Zmiana średniego czasu oczekiwania `AdaptiveRR(8,1)` względem `RR(8)` (wartoś
 | mixed | −2,0% | −7,8% | −7,6% |
 
 Adaptacyjny kwant poprawia średni czas oczekiwania w zestawach mieszanych, ale w zestawach jednorodnych (same krótkie albo same długie procesy) wypada gorzej. Wykonuje też znacznie więcej przełączeń kontekstu (np. dla `mixed`, `n = 50`: ok. 368 wobec 78 dla RR(8)). Wyniki zależą od rozkładu generatora i parametrów, więc wymagają dalszej analizy w eksperymencie C.
-
-## Ograniczenia i możliwe rozszerzenia
-
-- Przełączenie kontekstu nie kosztuje czasu symulacji (jest tylko liczone). Można dodać parametr kosztu przełączenia.
-- SJF i SRTF mają złożoność O(n²) (wystarczające dla n ≤ 500). Przy większych zestawach można użyć kolejki priorytetowej.
-- Znane czasy wykonania to uproszczenie modelu.
-- Możliwe rozszerzenia: kwant zależny od innych parametrów niż `N`, rozkłady przyjść inne niż równomierny, więcej metryk (np. sprawiedliwość, wariancja czasu oczekiwania).
