@@ -4,16 +4,6 @@ Projekt: **„Analiza i optymalizacja algorytmów kolejkowania procesów z wykor
 
 Program symuluje planowanie zadań na jednym procesorze i porównuje klasyczne algorytmy szeregowania z autorskim, adaptacyjnym algorytmem Round Robin. Czas jest symulowany liczbowo (bez `sleep()`), a wyniki eksperymentów są eksportowane do plików CSV.
 
-## Co nowego względem wersji z jednym plikiem
-
-| Zmiana | Gdzie |
-|---|---|
-| Algorytm priorytetowy oparty o kolejkę priorytetową (`std::priority_queue`), wersja wywłaszczająca i niewywłaszczająca | `src/algorithms/priority.*` |
-| Kara czasowa za przełączenie kontekstu (`--cs-cost=N`, domyślnie 1) | `src/core/context_switch.*`, `SimConfig` |
-| Podział `main.cpp` na moduły, jeden algorytm = jeden plik | `src/` |
-| Wielowątkowość: `--threads=N` oraz tryb testowy `threadtest` (1..X wątków) | `src/parallel/`, `src/app/thread_benchmark.*` |
-| Nowy eksperyment E (wpływ kary przełączenia) | `src/experiments/experiment_e.cpp` |
-
 ## Struktura projektu
 
 ```
@@ -142,27 +132,6 @@ Format CSV bez zmian: `experiment,scenario,n,mix,algorithm,runs,avg_waiting,avg_
 
 `./sim test` sprawdza m.in.: klasyczny przykład FCFS/SJF, SRTF ≤ SJF, bezczynność, RR(q=4), tabelę kwantów adaptacyjnych, **kolejność i wywłaszczanie w algorytmie priorytetowym** (oraz zgodność z FCFS przy równych priorytetach), **dokładne wartości przy karze przełączenia** (FCFS kara 2 → makespan 28, RR kara 1 → makespan 33, …), 200 losowych zestawów × wszystkie algorytmy dla kary 0 i 2 oraz **identyczność wyników dla 1 i wielu wątków**.
 
-## Wyniki
-
-**Kara 0 (model idealny, jak w poprzedniej wersji; `--cs-cost=0`)**: zmiana średniego oczekiwania `AdaptiveRR(8,1)` względem `RR(8)` (ujemna = adaptacyjny lepszy):
-
-| Zestaw | n = 10 | n = 50 | n = 200 |
-|---|---|---|---|
-| short | +18,5% | +28,4% | +28,7% |
-| long | +2,9% | +4,9% | +5,0% |
-| mixed | −2,0% | −7,8% | −7,6% |
-
-**Kara 1 (domyślna)**:
-
-| Zestaw | n = 10 | n = 50 | n = 200 |
-|---|---|---|---|
-| short | +48,4% | +132,9% | +150,1% |
-| long | +79,8% | +90,1% | +89,9% |
-| mixed | +38,6% | +69,1% | +71,4% |
-
-**Wniosek:** przy zerowym koszcie przełączeń adaptacyjny kwant poprawia oczekiwanie w zestawach mieszanych (−7,8%). Już kara równa 1 jednostce czasu odwraca ten wynik, bo adaptacyjny RR wykonuje ok. 370 przełączeń kontekstu wobec 78 dla RR(8) (`mixed`, `n = 50`). Przy karze 4 średnie oczekiwanie wynosi 815 wobec 287 dla RR(8). Eksperyment E pokazuje to dla pełnego zakresu kar. Żeby adaptacyjny kwant miał sens w realistycznym modelu, trzeba ograniczyć liczbę przełączeń, np. większe `qmin` (patrz eksperyment C) albo histereza zmiany kwantu.
-
-Algorytm priorytetowy zachowuje się podobnie do FCFS (oczekiwanie ok. 178 wobec 176 dla `mixed`, `n = 50`, kara 1). Priorytety w generatorze są niezależne od długości procesu, więc nie skracają one średniego czasu oczekiwania.
 
 ## Ograniczenia i możliwe rozszerzenia
 
