@@ -1,6 +1,11 @@
 # Prerequisites
 *.d
 
+build/
+sim
+results_*.csv
+
+
 # Compiled Object files
 *.slo
 *.lo

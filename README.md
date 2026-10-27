@@ -1,137 +1,150 @@
-# Symulator algorytmów kolejkowania procesów (C++)
+# Symulator algorytmów kolejkowania procesów (C++17)
 
 Projekt: **„Analiza i optymalizacja algorytmów kolejkowania procesów z wykorzystaniem adaptacyjnego kwantu czasu”.**
 
 Program symuluje planowanie zadań na jednym procesorze i porównuje klasyczne algorytmy szeregowania z autorskim, adaptacyjnym algorytmem Round Robin. Czas jest symulowany liczbowo (bez `sleep()`), a wyniki eksperymentów są eksportowane do plików CSV.
 
-## Zawartość
+## Co nowego względem wersji z jednym plikiem
 
-| Plik | Opis |
+| Zmiana | Gdzie |
 |---|---|
-| `main.cpp` | Cały kod: model, algorytmy, metryki, generator, testy, demo, eksperymenty |
-| `results_*.csv` | Wyniki eksperymentów A–D (tworzone po uruchomieniu `experiments`) |
+| Algorytm priorytetowy oparty o kolejkę priorytetową (`std::priority_queue`), wersja wywłaszczająca i niewywłaszczająca | `src/algorithms/priority.*` |
+| Kara czasowa za przełączenie kontekstu (`--cs-cost=N`, domyślnie 1) | `src/core/context_switch.*`, `SimConfig` |
+| Podział `main.cpp` na moduły, jeden algorytm = jeden plik | `src/` |
+| Wielowątkowość: `--threads=N` oraz tryb testowy `threadtest` (1..X wątków) | `src/parallel/`, `src/app/thread_benchmark.*` |
+| Nowy eksperyment E (wpływ kary przełączenia) | `src/experiments/experiment_e.cpp` |
+
+## Struktura projektu
+
+```
+src/
+  main.cpp                        tylko parsowanie argumentów i wybór trybu
+  core/
+    process.h                     Process, RunResult
+    sim_config.h                  SimConfig (kara przełączenia)
+    context_switch.*              ContextSwitchTracker: liczenie przełączeń + kara czasowa
+    process_utils.*               sortByArrival, prepare
+    metrics.*                     Metrics, computeMetrics, sameMetrics
+    validate.*                    kontrola niezmienników harmonogramu
+  algorithms/
+    fcfs.*  sjf.*  srtf.*  priority.*
+    round_robin_engine.*          wspólny silnik RR (funkcja N -> q)
+    round_robin.*  adaptive_round_robin.*
+    algo_registry.*               struct Algo, defaultAlgos, makeRR, makeAdaptiveRR
+  generator/generator.*           Mix, generateProcesses
+  parallel/parallel_for.*         parallelFor, resolveThreadCount
+  experiments/
+    experiment_config.h           runs, baseSeed, threads, SimConfig
+    average_runs.*                średnia po zestawach (równolegle)
+    csv_output.*                  zapis CSV
+    experiment_a.cpp … experiment_e.cpp, run_all_experiments.cpp
+  app/
+    cli.*  self_tests.*  demo.*  thread_benchmark.*
+```
 
 ## Kompilacja i uruchomienie
 
-Wymagany jest kompilator z obsługą C++17 (np. g++).
+Wymagany kompilator z obsługą C++17 i wątków (np. g++).
 
 ```bash
-g++ -std=c++17 -O2 -Wall -Wextra -o sim main.cpp
+make                      # buduje ./sim  (albo: cmake -B build && cmake --build build)
+# ręcznie: g++ -std=c++17 -O2 -Wall -Wextra -pthread -Isrc $(find src -name '*.cpp') -o sim
 
-./sim test         # testy poprawności
-./sim demo         # przykład na 10 procesach z wydrukiem wyników
-./sim experiments  # eksperymenty A–D -> pliki CSV
-./sim all          # wszystko po kolei (domyślnie)
+./sim test                # testy poprawności
+./sim demo                # przykład na 10 procesach
+./sim experiments         # eksperymenty A–E -> pliki CSV
+./sim all                 # test + demo + experiments (domyślnie)
+./sim threadtest          # test wielowątkowości: 1..X wątków
 ```
 
-Program zwraca kod 0, jeśli testy przeszły, i niezerowy w przeciwnym razie.
+Opcje (format `--nazwa=wartość`):
+
+| Opcja | Znaczenie | Domyślnie |
+|---|---|---|
+| `--threads=N` | liczba wątków roboczych dla testów i eksperymentów; `0` = wszystkie rdzenie | 1 |
+| `--max-threads=X` | górna granica trybu `threadtest` (sprawdza 1, 2, …, X); `0` = liczba rdzeni | liczba rdzeni |
+| `--cs-cost=N` | kara czasowa za każde przełączenie kontekstu; `0` = model idealny | 1 |
+| `--runs=N` | liczba losowych zestawów na konfigurację | 100 |
+| `--seed=N` | ziarno bazowe | 1000 |
+
+Przykłady: `./sim experiments --threads=8 --cs-cost=2`, `./sim threadtest --max-threads=16 --runs=200`.
+Program zwraca kod 0, jeśli testy przeszły, i niezerowy w przeciwnym razie (2 przy błędnych argumentach).
 
 ## Model symulacji
 
-- Jeden procesor i jedna kolejka procesów gotowych.
-- Czas jest całkowitoliczbowy i symulowany matematycznie: proces o `remainingTime = 10`, który dostaje kwant 3, ma po turze `remainingTime = 7`.
-- Czasy przyjścia i wykonania są znane z góry i generowane programowo. To uproszczenie względem rzeczywistych systemów, w których czasy wykonania nie są dokładnie znane.
-- Round Robin, SRTF i adaptacyjny RR są wywłaszczające. FCFS i SJF nie są.
-- Procesor może być bezczynny, gdy żaden proces nie jest gotowy. Zegar przeskakuje wtedy do najbliższego przyjścia.
+- Jeden procesor i jedna kolejka procesów gotowych. Czas jest całkowitoliczbowy.
+- Czasy przyjścia i wykonania są znane z góry (uproszczenie względem realnych systemów).
+- RR, SRTF, adaptacyjny RR i priorytetowy z wywłaszczaniem są wywłaszczające. FCFS, SJF i priorytetowy bez wywłaszczania nie są.
+- Procesor może być bezczynny; zegar przeskakuje wtedy do najbliższego przyjścia.
 
-### Struktura `Process`
+### Przełączenie kontekstu i kara czasowa
 
-| Pole | Znaczenie |
-|---|---|
-| `id` | identyfikator procesu |
-| `arrivalTime` | czas przyjścia do kolejki |
-| `burstTime` | początkowy wymagany czas wykonania |
-| `remainingTime` | pozostały czas wykonania |
-| `startTime` | pierwsze uruchomienie (−1, dopóki proces nie wystartował) |
-| `completionTime` | czas zakończenia |
+Przełączenie liczymy, gdy procesor zaczyna wykonywać proces **inny** niż ostatnio wykonywany. Nie liczymy pierwszego uruchomienia ani bezczynności.
+
+Każde przełączenie **kosztuje `contextSwitchCost` jednostek czasu**, w których procesor nie wykonuje żadnego procesu. Konsekwencje:
+
+- `startTime` to chwila faktycznego ruszenia procesu, czyli już po karze (czas odpowiedzi ją zawiera).
+- Kara wchodzi do czasu oczekiwania (`W = C − A − B`), bo nie jest częścią `B`.
+- `makespan ≥ suma burstów + liczba_przełączeń · koszt`. Ten niezmiennik sprawdza `validate`.
+- Gdy w trakcie przełączenia przyjdzie lepszy proces (SRTF, priorytetowy z wywłaszczaniem), dispatcher przełącza się ponownie, z kolejną karą.
+- W RR liczba gotowych procesów `N` (dla kwantu adaptacyjnego) jest liczona na początku tury, przed karą.
+
+### Planowanie priorytetowe
+
+`runPriority(procs, preemptive)`: gotowe procesy trzymane są w `std::priority_queue`. Mniejsza liczba `priority` oznacza wyższy priorytet. Remis rozstrzyga kolejność przybycia, potem `id`. Generator losuje priorytety 1–5 z **osobnego** generatora liczb losowych, więc nie zmienia pozostałych danych (wyniki innych algorytmów z poprzedniej wersji są odtwarzalne). Algorytm może zagłodzić procesy o niskim priorytecie. Możliwe rozszerzenie: *aging*.
 
 ## Algorytmy
 
-Każda funkcja przyjmuje wektor procesów **przez kopię** (oryginalne dane wejściowe nie są modyfikowane, więc ten sam zestaw można uruchomić na wszystkich algorytmach) i zwraca `RunResult` (procesy z uzupełnionymi czasami oraz liczba przełączeń kontekstu).
+1. **FCFS** (`runFCFS`)
+2. **SJF** niewywłaszczający (`runSJF`)
+3. **SRTF** (`runSRTF`)
+4. **Priorytetowy** (`runPriority`, wariant `np` i `p`)
+5. **Round Robin** (`runRR(procs, q)`)
+6. **Adaptacyjny Round Robin** (`runAdaptiveRR(procs, q0, qmin)`): `q(N) = max(qmin, ceil(q0 / N))`, gdzie `N` to liczba procesów gotowych łącznie z wybieranym.
 
-1. **FCFS / FIFO** (`runFCFS`): procesy w kolejności przybycia, bez wywłaszczania.
-2. **SJF** (`runSJF`): niewywłaszczający. Po zwolnieniu procesora wybierany jest gotowy proces o najmniejszym `burstTime`. Remis rozstrzyga kolejność przybycia, a potem `id`.
-3. **SRTF** (`runSRTF`): wywłaszczająca wersja SJF (piąty, opcjonalny algorytm). Decyzja zapada przy każdym przyjściu i zakończeniu procesu, wybierany jest proces o najmniejszym `remainingTime`.
-4. **Round Robin** (`runRR(procs, q)`): stały kwant `q`. Proces, który się nie zakończył, wraca na koniec kolejki.
-5. **Adaptacyjny Round Robin** (`runAdaptiveRR(procs, q0, qmin)`): kwant zależy od liczby procesów gotowych.
+Każda funkcja przyjmuje wektor procesów przez kopię oraz `SimConfig` i zwraca `RunResult`.
 
-### Adaptacyjny kwant
+## Wielowątkowość
+
+Równolegle liczone są **niezależne zestawy losowe** (`averageOverRuns`, testy losowe). Algorytmy są czystymi funkcjami, a każdy zestaw zapisuje wynik do własnego slotu. Sumowanie odbywa się potem w stałej kolejności, więc **wyniki są bitowo identyczne niezależnie od liczby wątków**. Weryfikują to test `./sim test` i tryb `threadtest`. Wyjątki z wątków (np. niepoprawny harmonogram) są przekazywane do wątku głównego.
+
+`./sim threadtest [--max-threads=X]` liczy to samo obciążenie (7 algorytmów × `--runs` zestawów, n = 400) na 1, 2, …, X wątkach. Wypisuje czas, przyspieszenie, efektywność i zgodność wyników z przebiegiem jednowątkowym:
 
 ```
-q(N) = max(qmin, ceil(q0 / N))
+   watki   czas [ms]  przyspieszenie  efektywnosc      wyniki
+       1        79.2           1.00x         100%      (baza)
+       2        ...
 ```
 
-`N` to liczba procesów gotowych, **łącznie z aktualnie wybieranym**, liczona na początku każdej tury. Dla `q0 = 8` i `qmin = 1`:
-
-| N | 1 | 2 | 3 | 4 | 8 |
-|---|---|---|---|---|---|
-| q | 8 | 4 | 3 | 2 | 1 |
-
-Round Robin i jego wersja adaptacyjna korzystają z jednego silnika (`runRoundRobinGeneric`), który dostaje funkcję `N -> q`. Dzięki temu oba algorytmy różnią się wyłącznie regułą doboru kwantu.
-
-Szczegół implementacyjny: gdy w trakcie tury (lub w jej momencie zakończenia) przychodzą nowe procesy, trafiają do kolejki **przed** procesem wracającym z tej tury. Jest to standardowa konwencja dla RR.
+> Uwaga: środowisko, w którym sprawdzałem kod, miało 1 rdzeń, więc zmierzone przyspieszenie wynosiło ≈1,0x (przy pełnej zgodności wyników). Realne przyspieszenie zobaczysz na swoim komputerze.
 
 ## Wskaźniki jakości
 
-Dla każdego procesu (`C` – zakończenie, `A` – przyjście, `B` – czas wykonania, `S` – pierwsze uruchomienie):
-
-- czas przebywania w systemie: `T = C − A`
-- czas oczekiwania: `W = T − B`
-- czas odpowiedzi: `R = S − A`
-
-Program raportuje: średni czas oczekiwania (główne kryterium), średni czas przebywania, średni czas odpowiedzi, czas zakończenia całego zestawu (`makespan` = największe `C`, liczone od t = 0) oraz liczbę przełączeń kontekstu.
-
-### Definicja przełączenia kontekstu
-
-Przełączenie liczymy, gdy procesor zaczyna wykonywać proces **inny** niż ten, który wykonywał się jako ostatni. Nie liczymy pierwszego uruchomienia ani czasu bezczynności. Kolejne tury tego samego procesu pod rząd (np. gdy został sam w kolejce) nie są przełączeniem.
+`T = C − A`, `W = T − B`, `R = S − A`. Raportowane: średni czas oczekiwania (główne kryterium), przebywania, odpowiedzi, `makespan` i liczba przełączeń.
 
 ## Generator danych
 
-`generateProcesses(n, mix, seed)` używa `std::mt19937`, więc wyniki są powtarzalne dla danego ziarna.
-
-- Czas przyjścia: losowo (rozkład równomierny) z przedziału `[0, 2n]`.
-- Czas wykonania zależy od typu zestawu:
-  - `short`: 1–5,
-  - `long`: 10–30,
-  - `mixed`: 70% procesów krótkich i 30% długich.
-
-W eksperymentach każdy algorytm dostaje **dokładnie te same** zestawy (ziarno = `baseSeed + numer_powtórzenia`), a wyniki są uśredniane po 100 zestawach (`baseSeed = 1000`).
+`generateProcesses(n, mix, seed)` (`std::mt19937`): przyjście z `[0, 2n]`, czas wykonania `short` 1–5, `long` 10–30, `mixed` 70% krótkich i 30% długich, priorytet 1–5. W eksperymentach każdy algorytm dostaje te same zestawy (ziarno = `baseSeed + nr_powtórzenia`).
 
 ## Eksperymenty
 
 | Eksperyment | Plik | Co zmieniamy |
 |---|---|---|
-| A – liczba procesów | `results_A_process_count.csv` | `n` ∈ {10, 20, 50, 100, 200, 500}, zestaw `mixed` |
-| B – długość procesów | `results_B_burst_length.csv` | `short` / `long` / `mixed`, `n = 50` |
-| C – parametry kwantu | `results_C_quantum_params.csv` | RR: `q` ∈ {1, 2, 4, 8, 16, 32}. Adaptacyjny: `q0` ∈ {4, 8, 16, 32, 64} × `qmin` ∈ {1, 2, 4}. `n = 50`, `mixed` |
-| D – porównanie | `results_D_comparison.csv` | siatka `mix` × `n` ∈ {10, 50, 200} dla wszystkich algorytmów + zestawienie RR(8) vs adaptacyjny na ekranie |
+| A | `results_A_process_count.csv` | `n` ∈ {10, 20, 50, 100, 200, 500}, `mixed` |
+| B | `results_B_burst_length.csv` | `short` / `long` / `mixed`, `n = 50` |
+| C | `results_C_quantum_params.csv` | RR: `q` ∈ {1…32}; adaptacyjny: `q0` ∈ {4…64} × `qmin` ∈ {1, 2, 4} |
+| D | `results_D_comparison.csv` | `mix` × `n` ∈ {10, 50, 200}, wszystkie algorytmy + zestawienie RR(8) vs adaptacyjny |
+| **E** | `results_E_switch_cost.csv` | kara przełączenia ∈ {0, 1, 2, 4, 8}, `n = 50`, `mixed` |
 
-Domyślne parametry w A, B i D: `RR(q=8)` oraz `AdaptiveRR(q0=8, qmin=1)`.
+Format CSV bez zmian: `experiment,scenario,n,mix,algorithm,runs,avg_waiting,avg_turnaround,avg_response,makespan,context_switches`.
 
-### Format CSV
+## Testy
 
-```
-experiment,scenario,n,mix,algorithm,runs,avg_waiting,avg_turnaround,avg_response,makespan,context_switches
-```
+`./sim test` sprawdza m.in.: klasyczny przykład FCFS/SJF, SRTF ≤ SJF, bezczynność, RR(q=4), tabelę kwantów adaptacyjnych, **kolejność i wywłaszczanie w algorytmie priorytetowym** (oraz zgodność z FCFS przy równych priorytetach), **dokładne wartości przy karze przełączenia** (FCFS kara 2 → makespan 28, RR kara 1 → makespan 33, …), 200 losowych zestawów × wszystkie algorytmy dla kary 0 i 2 oraz **identyczność wyników dla 1 i wielu wątków**.
 
-Wszystkie wartości metryk są średnimi po `runs` zestawach. Plików można użyć bezpośrednio do wykresów (Excel, Python/pandas, gnuplot).
+## Wyniki
 
-## Poprawność i testy
-
-`./sim test` sprawdza m.in.:
-
-- FCFS i SJF na klasycznym przykładzie `(A,B) = (0,5), (1,3), (2,8), (3,6)`: średnie oczekiwanie 5,75 (FCFS) i 5,25 (SJF), `makespan` 22,
-- SRTF nie ma gorszego oczekiwania niż SJF na tym przykładzie,
-- obsługę bezczynności procesora (przerwa między procesami) dla wszystkich algorytmów,
-- RR z `q = 4` dla czasów 24, 3, 3 (średnie oczekiwanie 17/3, 3 przełączenia kontekstu),
-- tabelę adaptacyjnych kwantów 8, 4, 3, 2, 1,
-- 200 losowych zestawów × wszystkie algorytmy pod kątem niezmienników (`validate`): start nie wcześniej niż przyjście, zakończenie nie wcześniej niż `start + burst`, `makespan` nie mniejszy niż suma czasów wykonania.
-
-Ta sama kontrola `validate` działa w trakcie eksperymentów. Niepoprawny harmonogram przerywa program z komunikatem błędu.
-
-## Przykładowe wyniki (domyślne uruchomienie)
-
-Zmiana średniego czasu oczekiwania `AdaptiveRR(8,1)` względem `RR(8)` (wartość ujemna = adaptacyjny lepszy):
+**Kara 0 (model idealny, jak w poprzedniej wersji; `--cs-cost=0`)**: zmiana średniego oczekiwania `AdaptiveRR(8,1)` względem `RR(8)` (ujemna = adaptacyjny lepszy):
 
 | Zestaw | n = 10 | n = 50 | n = 200 |
 |---|---|---|---|
@@ -139,4 +152,20 @@ Zmiana średniego czasu oczekiwania `AdaptiveRR(8,1)` względem `RR(8)` (wartoś
 | long | +2,9% | +4,9% | +5,0% |
 | mixed | −2,0% | −7,8% | −7,6% |
 
-Adaptacyjny kwant poprawia średni czas oczekiwania w zestawach mieszanych, ale w zestawach jednorodnych (same krótkie albo same długie procesy) wypada gorzej. Wykonuje też znacznie więcej przełączeń kontekstu (np. dla `mixed`, `n = 50`: ok. 368 wobec 78 dla RR(8)). Wyniki zależą od rozkładu generatora i parametrów, więc wymagają dalszej analizy w eksperymencie C.
+**Kara 1 (domyślna)**:
+
+| Zestaw | n = 10 | n = 50 | n = 200 |
+|---|---|---|---|
+| short | +48,4% | +132,9% | +150,1% |
+| long | +79,8% | +90,1% | +89,9% |
+| mixed | +38,6% | +69,1% | +71,4% |
+
+**Wniosek:** przy zerowym koszcie przełączeń adaptacyjny kwant poprawia oczekiwanie w zestawach mieszanych (−7,8%). Już kara równa 1 jednostce czasu odwraca ten wynik, bo adaptacyjny RR wykonuje ok. 370 przełączeń kontekstu wobec 78 dla RR(8) (`mixed`, `n = 50`). Przy karze 4 średnie oczekiwanie wynosi 815 wobec 287 dla RR(8). Eksperyment E pokazuje to dla pełnego zakresu kar. Żeby adaptacyjny kwant miał sens w realistycznym modelu, trzeba ograniczyć liczbę przełączeń, np. większe `qmin` (patrz eksperyment C) albo histereza zmiany kwantu.
+
+Algorytm priorytetowy zachowuje się podobnie do FCFS (oczekiwanie ok. 178 wobec 176 dla `mixed`, `n = 50`, kara 1). Priorytety w generatorze są niezależne od długości procesu, więc nie skracają one średniego czasu oczekiwania.
+
+## Ograniczenia i możliwe rozszerzenia
+
+- Kara przełączenia jest stała (nie zależy od procesu). Można ją uzależnić np. od rozmiaru stanu procesu.
+- SJF i SRTF mają złożoność O(n²). Można je przepisać na kolejkę priorytetową tak jak algorytm priorytetowy.
+- Aging w algorytmie priorytetowym, inne rozkłady przyjść, miary sprawiedliwości.
