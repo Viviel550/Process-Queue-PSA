@@ -129,14 +129,3 @@ Wszystkie wartości metryk są średnimi po `runs` zestawach. Plików można uż
 
 Ta sama kontrola `validate` działa w trakcie eksperymentów. Niepoprawny harmonogram przerywa program z komunikatem błędu.
 
-## Przykładowe wyniki (domyślne uruchomienie)
-
-Zmiana średniego czasu oczekiwania `AdaptiveRR(8,1)` względem `RR(8)` (wartość ujemna = adaptacyjny lepszy):
-
-| Zestaw | n = 10 | n = 50 | n = 200 |
-|---|---|---|---|
-| short | +18,5% | +28,4% | +28,7% |
-| long | +2,9% | +4,9% | +5,0% |
-| mixed | −2,0% | −7,8% | −7,6% |
-
-Adaptacyjny kwant poprawia średni czas oczekiwania w zestawach mieszanych, ale w zestawach jednorodnych (same krótkie albo same długie procesy) wypada gorzej. Wykonuje też znacznie więcej przełączeń kontekstu (np. dla `mixed`, `n = 50`: ok. 368 wobec 78 dla RR(8)). Wyniki zależą od rozkładu generatora i parametrów, więc wymagają dalszej analizy w eksperymencie C.
