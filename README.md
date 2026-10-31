@@ -100,14 +100,6 @@ Równolegle liczone są **niezależne zestawy losowe** (`averageOverRuns`, testy
 
 `./sim threadtest [--max-threads=X]` liczy to samo obciążenie (7 algorytmów × `--runs` zestawów, n = 400) na 1, 2, …, X wątkach. Wypisuje czas, przyspieszenie, efektywność i zgodność wyników z przebiegiem jednowątkowym:
 
-```
-   watki   czas [ms]  przyspieszenie  efektywnosc      wyniki
-       1        79.2           1.00x         100%      (baza)
-       2        ...
-```
-
-> Uwaga: środowisko, w którym sprawdzałem kod, miało 1 rdzeń, więc zmierzone przyspieszenie wynosiło ≈1,0x (przy pełnej zgodności wyników). Realne przyspieszenie zobaczysz na swoim komputerze.
-
 ## Wskaźniki jakości
 
 `T = C − A`, `W = T − B`, `R = S − A`. Raportowane: średni czas oczekiwania (główne kryterium), przebywania, odpowiedzi, `makespan` i liczba przełączeń.
